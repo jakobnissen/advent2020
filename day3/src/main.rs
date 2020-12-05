@@ -3,16 +3,30 @@ use std::io::{self, BufRead};
 
 fn main() {
     let rows = parse_rows();
-    println!("{:?}", traverse(&rows))
+    let mut prod = 1;
+    for (right, down) in vec![(1, 1), (3, 1), (5, 1), (7, 1), (1, 2)] {
+        let trees = traverse(&rows, right, down);
+        println!("{}", trees);
+        prod *= trees;
+    }
+    println!("{}", prod)
 }
 
-fn traverse(vecs: &Vec<Vec<bool>>) -> i32 {
+fn traverse(vecs: &Vec<Vec<bool>>, right: usize, down: usize) -> usize {
+    if vecs.len() == 0 {
+        return 0
+    }
+    
     let mut n = 0;
     let mut xpos = 0;
-    for vec in vecs {
-        let p: i32 = vec[xpos].into();
+    let mut ypos = 0;
+    let width = vecs[0].len();
+
+    while ypos < vecs.len() {
+        let p: usize = vecs[ypos][xpos].into();
         n += p;
-        xpos = (xpos + 3) % vec.len();
+        xpos = (xpos + right) % width;
+        ypos += down
     }
     return n
 }
