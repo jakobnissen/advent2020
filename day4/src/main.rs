@@ -5,6 +5,7 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::iter::FromIterator;
+use std::str::FromStr;
 
 #[derive(Debug)]
 enum Color {
@@ -31,14 +32,21 @@ impl Color {
         Some(content)
     }
 
-    fn force_from_str(str: &str) -> Color {
-        if let Some(color) = Color::from_str(str) {
+    fn force_from_str(string: &str) -> Color {
+        if let Some(color) = Color::from_str(string) {
             color
         } else {
-            exit_with(&format!("Cannot parse \"{}\" as color.", str))
+            exit_with(&format!("Cannot parse to color: {}", string))
         }
     }
 }
+
+// I want to try to avoid panicking in this code, so I make a function to exit the program orderly.
+fn exit_with(string: &str) -> ! {
+    println!("{}", string);
+    std::process::exit(1)
+}
+
 
 // This should never panic
 lazy_static! {
@@ -69,63 +77,56 @@ struct Passport {
     cid: Option<u16>
 }
 
-fn exit_with(string: &str) -> ! {
-    println!("{}", string);
-    std::process::exit(1)
+#[derive(Debug, Clone)]
+enum ParsePassportError {
+    MissingField,
+    UnexpectedField,
+    DuplicateField
 }
 
-fn try_parse_u16(str: &str) -> u16 {
-    let res = str.parse::<u16>();
-    if let Ok(n) = res {
+fn force_parse<T: FromStr>(string: &str) -> T {
+    if let Ok(n) = string.parse::<T>() {
         return n
     } else {
-        exit_with(&format!("Cannot parse as u16: {}", str))
-    }
-}
-
-fn try_parse_u64(str: &str) -> u64 {
-    let res = str.parse::<u64>();
-    if let Ok(n) = res {
-        n
-    } else {
-        exit_with(&format!("Cannot parse as u64: {}", str))   
+        exit_with(&format!("Parser error: Cannot parse {}", string))
     }
 }
 
 impl Passport {
-    // Must be a superset
-    fn from_hashmap(map: &HashMap<&str, &str>) -> Passport {
+    fn from_hashmap(map: &HashMap<&str, &str>) -> Result<Passport, ParsePassportError> {
         let keyset = HashSet::from_iter(map.keys().copied());
         let diff: HashSet<&str> = REQUIRED_FIELDS.difference(&keyset).copied().collect();
         
         // Must must contain required fields
         if diff.len() != 0 {
-            let error_string = diff.iter().copied().collect::<Vec<&str>>().join(", ");
-            exit_with(&format!("Missing fields of passport: {:?}", error_string))
+            return Result::Err(ParsePassportError::MissingField)
         }
 
-        // TODO: Must not contain other fields
+        // Must not contain other fields
         let nonrequired: HashSet<&str> = keyset.difference(&REQUIRED_FIELDS).copied().collect();
         let superfluous: HashSet<&str> = nonrequired.difference(&OPTIONAL_FIELDS).copied().collect();
         if superfluous.len() != 0 {
-            let error_string = superfluous.iter().copied().collect::<Vec<&str>>().join(", ");
-            exit_with(&format!("Unaccepted fields of passport: {:?}", error_string))
+            return Result::Err(ParsePassportError::UnexpectedField)
         }
 
         // Create passport
-        Passport{
-            byr: try_parse_u16(map.get("byr").unwrap()),
-            iyr: try_parse_u16(map.get("iyr").unwrap()),
-            eyr: try_parse_u16(map.get("eyr").unwrap()),
-            hgt: try_parse_u16(map.get("hgt").unwrap()),
+        let passport = Passport{
+            byr: force_parse::<u16>(map.get("byr").unwrap()),
+            iyr: force_parse::<u16>(map.get("iyr").unwrap()),
+            eyr: force_parse::<u16>(map.get("eyr").unwrap()),
+            hgt: force_parse::<u16>(map.get("hgt").unwrap()),
+            
             hcl: Color::force_from_str(&map.get("hcl").unwrap()),
             ecl: Color::force_from_str(&map.get("ecl").unwrap()),
-            pid: try_parse_u64(map.get("pid").unwrap()),
+
+            pid: force_parse::<u64>(map.get("pid").unwrap()),
             cid: match map.get("cid") {
-                Some(str) => Option::Some(try_parse_u16(str)),
+                Some(str) => Option::Some(force_parse::<u16>(str)),
                 None => Option::None
             }
-        }
+        };
+
+        return Ok(passport)
     }
 }
 
@@ -144,12 +145,12 @@ fn update_hashmap<'a>(hashmap: &mut HashMap<&'a str, &'a str>, line: &'a str) ->
             Some((key, val)) => {
                 let insertresult = hashmap.insert(key, val);
                 if let Some(_value) = insertresult {
-                    exit_with(&format!("Record has multiple keys \"{}\"", key));
+                    exit_with(&format!("Duplicate field: {}", key))
                 }
                 n_inserts += 1;
             },
             None => {
-                exit_with(&format!("Cannot parse key-value pair \"{}\".", pair));
+                exit_with(&format!("Cannot parse key-value pair {}", pair))
             }
         }
     }
