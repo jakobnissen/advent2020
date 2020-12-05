@@ -29,14 +29,23 @@ impl Color {
             _ => parse_color_hex(&str)?
         };
         Some(content)
-    }    
+    }
+
+    fn force_from_str(str: &str) -> Color {
+        if let Some(color) = Color::from_str(str) {
+            color
+        } else {
+            exit_with(&format!("Cannot parse \"{}\" as color.", str))
+        }
+    }
 }
 
 // This should never panic
 lazy_static! {
     static ref RE: Regex = Regex::new(r"#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})").unwrap();
-    static ref REQUIRED_FIELDS: HashSet<&'static str> = HashSet::from_iter(vec!["foo", "bar"]);
-    static ref OPTIONAL_FIELDS: HashSet<&'static str> = HashSet::from_iter(vec!["qux"]);
+    static ref REQUIRED_FIELDS: HashSet<&'static str> = HashSet::from_iter(
+        vec!["byr", "iyr", "eyr", "hgt", "hcl", "ecl", "pid"]);
+    static ref OPTIONAL_FIELDS: HashSet<&'static str> = HashSet::from_iter(vec!["cid"]);
     
 }
 
@@ -60,16 +69,34 @@ struct Passport {
     cid: Option<u16>
 }
 
-fn exit_with(string: &str) {
+fn exit_with(string: &str) -> ! {
     println!("{}", string);
     std::process::exit(1)
+}
+
+fn try_parse_u16(str: &str) -> u16 {
+    let res = str.parse::<u16>();
+    if let Ok(n) = res {
+        return n
+    } else {
+        exit_with(&format!("Cannot parse as u16: {}", str))
+    }
+}
+
+fn try_parse_u64(str: &str) -> u64 {
+    let res = str.parse::<u64>();
+    if let Ok(n) = res {
+        n
+    } else {
+        exit_with(&format!("Cannot parse as u64: {}", str))   
+    }
 }
 
 impl Passport {
     // Must be a superset
     fn from_hashmap(map: &HashMap<&str, &str>) -> Passport {
         let keyset = HashSet::from_iter(map.keys().copied());
-        let mut diff: HashSet<&str> = REQUIRED_FIELDS.difference(&keyset).copied().collect();
+        let diff: HashSet<&str> = REQUIRED_FIELDS.difference(&keyset).copied().collect();
         
         // Must must contain required fields
         if diff.len() != 0 {
@@ -86,16 +113,25 @@ impl Passport {
         }
 
         // Create passport
-        
-        
-
-        Passport{byr: 1, iyr: 1, eyr: 1, hgt: 1, hcl: Color::Blue, ecl: Color::Other, pid:101, cid: Some(11)}
+        Passport{
+            byr: try_parse_u16(map.get("byr").unwrap()),
+            iyr: try_parse_u16(map.get("iyr").unwrap()),
+            eyr: try_parse_u16(map.get("eyr").unwrap()),
+            hgt: try_parse_u16(map.get("hgt").unwrap()),
+            hcl: Color::force_from_str(&map.get("hcl").unwrap()),
+            ecl: Color::force_from_str(&map.get("ecl").unwrap()),
+            pid: try_parse_u64(map.get("pid").unwrap()),
+            cid: match map.get("cid") {
+                Some(str) => Option::Some(try_parse_u16(str)),
+                None => Option::None
+            }
+        }
     }
 }
 
 fn main() {
     let mut map = HashMap::new();
-    update_hashmap(&mut map, "foo:bar baz:tar");
+    update_hashmap(&mut map, "byr:1985 iyr:2000 eyr:2005 hgt:205 ecl:blu hcl:#14a2f2 pid:35232342");
     let passport = Passport::from_hashmap(&map);
     println!("{:?}", passport);
 }
