@@ -35,6 +35,9 @@ impl Color {
 // This should never panic
 lazy_static! {
     static ref RE: Regex = Regex::new(r"#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})").unwrap();
+    static ref REQUIRED_FIELDS: HashSet<&'static str> = HashSet::from_iter(vec!["foo", "bar"]);
+    static ref OPTIONAL_FIELDS: HashSet<&'static str> = HashSet::from_iter(vec!["qux"]);
+    
 }
 
 fn parse_color_hex(hex: &str) -> Option<Color> {   
@@ -56,18 +59,34 @@ struct Passport {
     cid: Option<u16>
 }
 
-/*
+fn exit_with(string: &str) {
+    println!("{}", string);
+    std::process::exit(1)
+}
+
 impl Passport {
-    fn from_hashmap(map: &HashMap) -> Option<Passport> {
+    // Must be a superset
+    fn from_hashmap(map: &HashMap<&str, &str>) -> Passport {
+        let keyset = HashSet::from_iter(map.keys().copied());
+        let mut diff: HashSet<&str> = REQUIRED_FIELDS.difference(&keyset).copied().collect();
         
+        // Must must contain required fields
+        if !keyset.is_subset(&REQUIRED_FIELDS) {
+            exit_with(&format!("Missing fields of passport: \"{:?}\"", diff))
+        }
+
+        // TODO: Must not contain other fields
+
+        // Create passport
+        
+
+        Passport{byr: 1, iyr: 1, eyr: 1, hgt: 1, hcl: Color::Blue, ecl: Color::Other, pid:101, cid: Some(11)}
     }
 }
-*/
 
 fn main() {
     let mut map = HashMap::new();
-    let mut n = 0;
-    n += update_hashmap(&mut map, "foo:bar baz:tar");
+    update_hashmap(&mut map, "foo:bar baz:tar");
     let set: HashSet<&str> = HashSet::from_iter(map.keys().copied());
     println!("{:?}", set);
 }
@@ -79,15 +98,13 @@ fn update_hashmap<'a>(hashmap: &mut HashMap<&'a str, &'a str>, line: &'a str) ->
         match parsedpair {
             Some((key, val)) => {
                 let insertresult = hashmap.insert(key, val);
-                if let Some(value) = insertresult {
-                    println!("Record has multiple keys \"{}\"", key);
-                    std::process::exit(1)
+                if let Some(_value) = insertresult {
+                    exit_with(&format!("Record has multiple keys \"{}\"", key));
                 }
                 n_inserts += 1;
             },
             None => {
-                println!("Cannot parse key-value pair \"{}\".", pair);
-                std::process::exit(1)
+                exit_with(&format!("Cannot parse key-value pair \"{}\".", pair));
             }
         }
     }
