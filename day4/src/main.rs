@@ -48,6 +48,7 @@ fn parse_color_hex(hex: &str) -> Option<Color> {
     Some(Color::RGB(c1, c2, c3))
 }
 
+#[derive(Debug)]
 struct Passport {
     byr: u16,
     iyr: u16,
@@ -71,13 +72,21 @@ impl Passport {
         let mut diff: HashSet<&str> = REQUIRED_FIELDS.difference(&keyset).copied().collect();
         
         // Must must contain required fields
-        if !keyset.is_subset(&REQUIRED_FIELDS) {
-            exit_with(&format!("Missing fields of passport: \"{:?}\"", diff))
+        if diff.len() != 0 {
+            let error_string = diff.iter().copied().collect::<Vec<&str>>().join(", ");
+            exit_with(&format!("Missing fields of passport: {:?}", error_string))
         }
 
         // TODO: Must not contain other fields
+        let nonrequired: HashSet<&str> = keyset.difference(&REQUIRED_FIELDS).copied().collect();
+        let superfluous: HashSet<&str> = nonrequired.difference(&OPTIONAL_FIELDS).copied().collect();
+        if superfluous.len() != 0 {
+            let error_string = superfluous.iter().copied().collect::<Vec<&str>>().join(", ");
+            exit_with(&format!("Unaccepted fields of passport: {:?}", error_string))
+        }
 
         // Create passport
+        
         
 
         Passport{byr: 1, iyr: 1, eyr: 1, hgt: 1, hcl: Color::Blue, ecl: Color::Other, pid:101, cid: Some(11)}
@@ -87,8 +96,8 @@ impl Passport {
 fn main() {
     let mut map = HashMap::new();
     update_hashmap(&mut map, "foo:bar baz:tar");
-    let set: HashSet<&str> = HashSet::from_iter(map.keys().copied());
-    println!("{:?}", set);
+    let passport = Passport::from_hashmap(&map);
+    println!("{:?}", passport);
 }
 
 fn update_hashmap<'a>(hashmap: &mut HashMap<&'a str, &'a str>, line: &'a str) -> u32 {
