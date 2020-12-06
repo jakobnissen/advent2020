@@ -15,44 +15,54 @@ enum Color {
     Green,
     Grey,
     Blue,
+    Ambiguous,
     Other,
     RGB(u8, u8, u8)
 }
 
 impl Color {
-    fn from_str(str: &str) -> Color {
-        match str {
+    fn from_ecl(str: &str) -> Result<Color, ParsePassportError> {
+        let color = match str {
             "brn" => Color::Brown,
             "hzl" => Color::Hazel,
             "grn" => Color::Green,
             "gry" => Color::Grey,
             "blu" => Color::Blue,
-            _ => {
-                if let Some(c) = parse_color_hex(str) {
-                    c
-                } else {
-                    Color::Other
-                }
-            }
-        }
+            "amb" => Color::Ambiguous,
+            "oth" => Color::Other,
+            _ => return Err(ParsePassportError::InvalidValue)
+        };
+            
+        Ok(color)
+    }
+
+    fn from_hcl(str: &str) -> Result<Color, ParsePassportError> {
+        let caps = match RE.captures(str) {
+            Some(c) => c,
+            None => return Err(ParsePassportError::InvalidValue)
+        };
+        let c1 = u8::from_str_radix(caps.get(1).unwrap().as_str(), 16)?;
+        let c2 = u8::from_str_radix(caps.get(2).unwrap().as_str(), 16)?;
+        let c3 = u8::from_str_radix(caps.get(3).unwrap().as_str(), 16)?;
+        Ok(Color::RGB(c1, c2, c3))
     }
 }
 
 // This should never panic
 lazy_static! {
-    static ref RE: Regex = Regex::new(r"#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})").unwrap();
+    static ref RE: Regex = Regex::new(r"^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$").unwrap();
     static ref REQUIRED_FIELDS: HashSet<&'static str> = HashSet::from_iter(
         vec!["byr", "iyr", "eyr", "hgt", "hcl", "ecl", "pid"]);
     static ref OPTIONAL_FIELDS: HashSet<&'static str> = HashSet::from_iter(vec!["cid"]);
     
 }
 
-fn parse_color_hex(hex: &str) -> Option<Color> {   
-    let caps = RE.captures(hex)?;
-    let c1 = u8::from_str_radix(caps.get(1).unwrap().as_str(), 16).ok()?;
-    let c2 = u8::from_str_radix(caps.get(2).unwrap().as_str(), 16).ok()?;
-    let c3 = u8::from_str_radix(caps.get(3).unwrap().as_str(), 16).ok()?;
-    Some(Color::RGB(c1, c2, c3))
+fn assert_between<T: std::cmp::PartialOrd>(n: T, low: T, high: T) -> Result<T, ParsePassportError> {
+    if low <= n && n <= high {
+        Ok(n)
+    } else {
+        Err(ParsePassportError::InvalidValue)
+    }
 }
 
 #[derive(Debug)]
@@ -74,13 +84,14 @@ enum ParsePassportError {
     MissingField,
     UnexpectedField,
     DuplicateField,
-    ParserError,
+    InvalidValue,
+    ParserError(String),
     ReadError,
 }
 
 impl From<std::num::ParseIntError> for ParsePassportError {
     fn from(_: std::num::ParseIntError) -> Self {
-        ParsePassportError::ParserError
+        ParsePassportError::InvalidValue
     }
 }
 
@@ -109,36 +120,46 @@ impl Passport {
 
         // Create passport
         let passport = Passport{
-            byr: map.get("byr").unwrap().parse::<u16>()?,
-            iyr: map.get("iyr").unwrap().parse::<u16>()?,
-            eyr: map.get("eyr").unwrap().parse::<u16>()?,
+            byr: assert_between(map.get("byr").unwrap().parse::<u16>()?, 1920, 2002)?,
+            eyr: assert_between(map.get("eyr").unwrap().parse::<u16>()?, 2020, 2030)?,
+            iyr: assert_between(map.get("iyr").unwrap().parse::<u16>()?, 2010, 2020)?,
 
-            // This should be formatted like \d+cm or \d+in or \d+
+            // This should be formatted like \d+cm or \d+in
             hgt: {
                 let hgtstring = map.get("hgt").unwrap();
-                let mut factor = 1.0;
-                let mut beginning = Default::default();
                 if let Some((i, _)) = hgtstring.char_indices().rev().nth(1) {
-                    match &hgtstring[i..] {
-                        "cm" => {factor = 1.0; beginning = &hgtstring[..i]},
-                        "in" => {factor = 2.54; beginning = &hgtstring[..i]},
-                        _ => {factor = 1.0; beginning = &hgtstring}
-                    }
+                    let (factor, low, high) = match &hgtstring[i..] {
+                        "cm" => (1.0, 150, 193),
+                        "in" => (2.54, 59, 76),
+                        _ => return Err(ParsePassportError::InvalidValue)
+                    };
+                    
+                    let value = assert_between(hgtstring[..i].parse::<u8>()?, low, high)?;
+                    (factor * (value as f64).round()) as u16    
                 } else {
-                    {factor = 1.0; beginning = &hgtstring}
+                    return Err(ParsePassportError::InvalidValue)
                 }
-                (beginning.parse::<u16>()? as f32 * factor).round() as u16
             },
 
-            hcl: Color::from_str(&map.get("hcl").unwrap()),
-            ecl: Color::from_str(&map.get("ecl").unwrap()),
+            hcl: Color::from_hcl(&map.get("hcl").unwrap())?,
+            ecl: Color::from_ecl(&map.get("ecl").unwrap())?,
             
-            // We somehow allow the PID to be fucked up.
-            //pid: map.get("pid").unwrap().parse::<u64>()?,
-            pid: 0,
+            pid: {
+                let pid = &map.get("pid").unwrap();
+                if pid.len() != 9 {
+                    return Err(ParsePassportError::InvalidValue)
+                
+                };
+                pid.parse::<u64>()?
+            },
             
             cid: match map.get("cid") {
-                Some(str) => Option::Some(str.parse::<u16>()?),
+                Some(str) => {
+                    match str.parse::<u16>() {
+                        Ok(n) => Some(n),
+                        Err(_) => None
+                    }
+                }
                 None => Option::None
             }
         };
@@ -156,8 +177,7 @@ struct PassportIterator {
 impl PassportIterator {
     fn from_path(string: &str) -> PassportIterator {
         let iobuf = BufReader::new(File::open(string).expect("Failed to open file"));
-        let map = HashMap::<String, String>::new();
-        PassportIterator{io: iobuf, map: map, linenumber: 0}
+        PassportIterator{io: iobuf, map: HashMap::<String, String>::new(), linenumber: 0}
     }
 }
 
@@ -197,8 +217,7 @@ impl Iterator for PassportIterator {
 }
 
 fn main() {
-    let passport = count_valid_passports("input.txt");
-    println!("{:?}", passport);
+    println!("{:?}", count_valid_passports("input.txt"));
 }
 
 fn count_valid_passports(path: &str) -> u32 {
@@ -208,6 +227,7 @@ fn count_valid_passports(path: &str) -> u32 {
         match result {
             Ok(_p) => {n += 1},
             Err(ParsePassportError::MissingField) => {},
+            Err(ParsePassportError::InvalidValue) => {},
             Err(e) => panic!("{:?} near line {}", e, linenumber)
         }
     }
@@ -228,7 +248,7 @@ fn update_hashmap(hashmap: &mut HashMap<String, String>, line: &str) -> Result<u
                 n_inserts += 1;
             },
             None => {
-                return Err(ParsePassportError::ParserError)
+                return Err(ParsePassportError::ParserError(format!("Cannot parse as key-value pair {}", pair)))
             }
         }
     }
