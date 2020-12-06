@@ -5,7 +5,8 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::iter::FromIterator;
-use std::str::FromStr;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 
 #[derive(Debug)]
 enum Color {
@@ -19,24 +20,14 @@ enum Color {
 }
 
 impl Color {
-    fn from_str(str: &str) -> Option<Color> {
-        let content = match str {
+    fn from_str(str: &str) -> Color {
+        match str {
             "brn" => Color::Brown,
             "hzl" => Color::Hazel,
             "grn" => Color::Green,
             "gry" => Color::Grey,
             "blu" => Color::Blue,
-            "oth" => Color::Other,
-            _ => parse_color_hex(&str)?
-        };
-        Some(content)
-    }
-
-    fn force_from_str(string: &str) -> Color {
-        if let Some(color) = Color::from_str(string) {
-            color
-        } else {
-            exit_with(&format!("Cannot parse to color: {}", string))
+            _ => Color::Other
         }
     }
 }
@@ -77,24 +68,32 @@ struct Passport {
     cid: Option<u16>
 }
 
+// How do I prevent throwing all the relevant information away
+// when an error is converted to ParsePassportError?
 #[derive(Debug, Clone)]
 enum ParsePassportError {
     MissingField,
     UnexpectedField,
-    DuplicateField
+    DuplicateField,
+    ParserError,
+    ReadError,
 }
 
-fn force_parse<T: FromStr>(string: &str) -> T {
-    if let Ok(n) = string.parse::<T>() {
-        return n
-    } else {
-        exit_with(&format!("Parser error: Cannot parse {}", string))
+impl From<std::num::ParseIntError> for ParsePassportError {
+    fn from(_: std::num::ParseIntError) -> Self {
+        ParsePassportError::ParserError
+    }
+}
+
+impl From<std::io::Error> for ParsePassportError {
+    fn from(_: std::io::Error) -> Self {
+        ParsePassportError::ReadError
     }
 }
 
 impl Passport {
-    fn from_hashmap(map: &HashMap<&str, &str>) -> Result<Passport, ParsePassportError> {
-        let keyset = HashSet::from_iter(map.keys().copied());
+    fn from_hashmap(map: &HashMap<String, String>) -> Result<Passport, ParsePassportError> {
+        let keyset: HashSet<&str> = HashSet::from_iter(map.keys().map(|s| s.as_ref()));
         let diff: HashSet<&str> = REQUIRED_FIELDS.difference(&keyset).copied().collect();
         
         // Must must contain required fields
@@ -111,17 +110,36 @@ impl Passport {
 
         // Create passport
         let passport = Passport{
-            byr: force_parse::<u16>(map.get("byr").unwrap()),
-            iyr: force_parse::<u16>(map.get("iyr").unwrap()),
-            eyr: force_parse::<u16>(map.get("eyr").unwrap()),
-            hgt: force_parse::<u16>(map.get("hgt").unwrap()),
-            
-            hcl: Color::force_from_str(&map.get("hcl").unwrap()),
-            ecl: Color::force_from_str(&map.get("ecl").unwrap()),
+            byr: map.get("byr").unwrap().parse::<u16>()?,
+            iyr: map.get("iyr").unwrap().parse::<u16>()?,
+            eyr: map.get("eyr").unwrap().parse::<u16>()?,
 
-            pid: force_parse::<u64>(map.get("pid").unwrap()),
+            // This should be formatted like \d+cm or \d+in or \d+
+            hgt: {
+                let hgtstring = map.get("hgt").unwrap();
+                let mut factor = 1.0;
+                let mut beginning = Default::default();
+                if let Some((i, _)) = hgtstring.char_indices().rev().nth(1) {
+                    match &hgtstring[i..] {
+                        "cm" => {factor = 1.0; beginning = &hgtstring[..i]},
+                        "in" => {factor = 2.54; beginning = &hgtstring[..i]},
+                        _ => {factor = 1.0; beginning = &hgtstring}
+                    }
+                } else {
+                    {factor = 1.0; beginning = &hgtstring}
+                }
+                (beginning.parse::<u16>()? as f32 * factor).round() as u16
+            },
+
+            hcl: Color::from_str(&map.get("hcl").unwrap()),
+            ecl: Color::from_str(&map.get("ecl").unwrap()),
+            
+            // We somehow allow the PID to be fucked up.
+            //pid: map.get("pid").unwrap().parse::<u64>()?,
+            pid: 0,
+            
             cid: match map.get("cid") {
-                Some(str) => Option::Some(force_parse::<u16>(str)),
+                Some(str) => Option::Some(str.parse::<u16>()?),
                 None => Option::None
             }
         };
@@ -130,31 +148,84 @@ impl Passport {
     }
 }
 
+struct PassportIterator {
+    io: BufReader<File>,
+    map: HashMap<String, String>,
+    linenumber: usize
+}
+
+impl PassportIterator {
+    fn from_path(string: &str) -> PassportIterator {
+        let iobuf = BufReader::new(File::open(string).expect("Failed to open file"));
+        let map = HashMap::<String, String>::new();
+        PassportIterator{io: iobuf, map: map, linenumber: 0}
+    }
+}
+
+impl Iterator for PassportIterator {
+    type Item = (usize, Result<Passport, ParsePassportError>);
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut linebuffer: String = String::new();
+        loop {
+            if let 0 = self.io.read_line(&mut linebuffer).expect("Failed to read line") {
+                return None
+            }
+            self.linenumber += 1;
+
+            if linebuffer.trim().is_empty() && !self.map.is_empty() {
+                let passportresult = Passport::from_hashmap(&mut self.map);
+                self.map.clear();
+                return Some((self.linenumber, passportresult))
+            } else {
+                let update = update_hashmap(&mut self.map, &linebuffer); 
+                linebuffer.clear();
+                match update {
+                    Ok(_n) => (),
+                    Err(e) => return Some((self.linenumber, Err(e)))
+                }
+            }
+        }
+    }
+}
+
 fn main() {
-    let mut map = HashMap::new();
-    update_hashmap(&mut map, "byr:1985 iyr:2000 eyr:2005 hgt:205 ecl:blu hcl:#14a2f2 pid:35232342");
-    let passport = Passport::from_hashmap(&map);
+    let passport = count_valid_passports("input.txt");
     println!("{:?}", passport);
 }
 
-fn update_hashmap<'a>(hashmap: &mut HashMap<&'a str, &'a str>, line: &'a str) -> u32 {
+fn count_valid_passports(path: &str) -> u32 {
+    let mut n: u32 = 0;
+    let iter = PassportIterator::from_path(path).into_iter();
+    for (linenumber, result) in iter {
+        match result {
+            Ok(_p) => {n += 1},
+            Err(ParsePassportError::MissingField) => {},
+            Err(e) => panic!("{:?} near line {}", e, linenumber)
+        }
+    }
+    n
+}
+
+fn update_hashmap(hashmap: &mut HashMap<String, String>, line: &str) -> Result<u32, ParsePassportError> {
     let mut n_inserts: u32 = 0;
     for pair in line.split_whitespace() {
         let parsedpair = parse_keyval_pairs(pair);
         match parsedpair {
             Some((key, val)) => {
-                let insertresult = hashmap.insert(key, val);
+                let insertresult = hashmap.insert(key.to_string(), val.to_string());
                 if let Some(_value) = insertresult {
-                    exit_with(&format!("Duplicate field: {}", key))
+                    println!("Field is {}", key);
+                    return Err(ParsePassportError::DuplicateField)
                 }
                 n_inserts += 1;
             },
             None => {
-                exit_with(&format!("Cannot parse key-value pair {}", pair))
+                return Err(ParsePassportError::ParserError)
             }
         }
     }
-    return n_inserts
+    return Ok(n_inserts)
 }
 
 fn parse_keyval_pairs(string: &str) -> Option<(&str, &str)> {
