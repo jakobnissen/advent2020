@@ -27,17 +27,16 @@ impl Color {
             "grn" => Color::Green,
             "gry" => Color::Grey,
             "blu" => Color::Blue,
-            _ => Color::Other
+            _ => {
+                if let Some(c) = parse_color_hex(str) {
+                    c
+                } else {
+                    Color::Other
+                }
+            }
         }
     }
 }
-
-// I want to try to avoid panicking in this code, so I make a function to exit the program orderly.
-fn exit_with(string: &str) -> ! {
-    println!("{}", string);
-    std::process::exit(1)
-}
-
 
 // This should never panic
 lazy_static! {
@@ -167,16 +166,19 @@ impl Iterator for PassportIterator {
     
     fn next(&mut self) -> Option<Self::Item> {
         let mut linebuffer: String = String::new();
+        let mut yieldpassport = false;
         loop {
             if let 0 = self.io.read_line(&mut linebuffer).expect("Failed to read line") {
-                return None
+                if !self.map.is_empty() {
+                    yieldpassport = true;
+                } else {
+                    return None
+                }
             }
             self.linenumber += 1;
 
             if linebuffer.trim().is_empty() && !self.map.is_empty() {
-                let passportresult = Passport::from_hashmap(&mut self.map);
-                self.map.clear();
-                return Some((self.linenumber, passportresult))
+                yieldpassport = true;
             } else {
                 let update = update_hashmap(&mut self.map, &linebuffer); 
                 linebuffer.clear();
@@ -184,6 +186,11 @@ impl Iterator for PassportIterator {
                     Ok(_n) => (),
                     Err(e) => return Some((self.linenumber, Err(e)))
                 }
+            }
+            if yieldpassport {
+                let passportresult = Passport::from_hashmap(&mut self.map);
+                self.map.clear();
+                return Some((self.linenumber, passportresult))
             }
         }
     }
