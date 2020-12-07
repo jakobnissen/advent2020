@@ -38,11 +38,9 @@ fn get_higest_id(path: &str) -> u32 {
 fn get_your_id(path: &str) -> u32 {
     let mut seats = Vec::new();
     let linereader = BufReader::new(File::open(path).expect("Failed to open file")).lines();
-    for (lineno, lineresult) in linereader.enumerate() {
-        let line = lineresult.expect("Failed to read line.");
-        if line.trim().is_empty() {
-            continue;
-        }
+    for (lineno, line) in linereader.enumerate()
+        .map(|(n, e)| (n, e.expect("Failed to read line.")))
+        .filter(|(n, e)| (!e.trim().is_empty())) {
         match partition_to_number(&line) {
             Some(n) => seats.push(n),
             None => panic!(format!("Failed to parse seat at line {}", lineno))
