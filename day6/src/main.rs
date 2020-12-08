@@ -1,65 +1,67 @@
 use std::fs::File;
 use std::io::{BufReader, BufRead};
+use std::process::exit;
 
 fn main() {
-    let mut path: String = String::new();
-    println!("Input path to read.");
-    std::io::stdin().read_line(&mut path).expect("Failed to read line");
-    println!("{}", part1(path.trim()));
-    println!("{}", part2(path.trim()));
+    let path = std::env::args().nth(1).unwrap_or_else(|| {println!("Usage: day6 [FILE]"); exit(1)});
+    partx(path.trim(), 0, &|a, b| a | b);
+    partx(path.trim(), u32::MAX, &|a, b| a & b);
 }
 
-struct LineSepIterator<'a, T> {
+struct LineSepIterator<T: BufRead> {
     io: T,
-    linebuf: &'a mut String,
+    linebuf: String
 }
 
-impl <'a, T: BufRead> Iterator for LineSepIterator<'a, T> {
-    type Item = Vec<&'a str>;
+impl <T: BufRead> Iterator for LineSepIterator<T> {
+    type Item = Result<Vec<String>, std::io::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.linebuf.clear();
         loop {
-            let nread = self.io.read_line(&mut self.linebuf).expect("Failed to read line");
+            let nread_res = self.io.read_line(&mut self.linebuf);
+            let nread = match nread_res {
+                Err(e) => return Some(Err(e)),
+                Ok(o) => o
+            };
+            if nread > 1 {
+                continue;
+            }
+            if !self.linebuf.is_empty() {
+                return Some(Ok(self.linebuf.trim().split('\n').map(|x| x.to_string()).collect()))
+            }
             if nread == 0 {
                 return None
-            } else if nread == 1 && self.linebuf.trim().is_empty() {
+            } else if nread == 1 {
                 self.linebuf.clear();
-            } else {
-                return Some(self.linebuf.split('a').collect())
             }
         }
     }
 }
 
-fn part1(path: &str) -> u32 {
-    let mut sum: u32 = 0;
-    let mut bitset: u32 = 0;
-    for line in read_lines(path) {
-        if line.is_empty() && bitset != 0 {
-            sum += bitset.count_ones();
-            bitset = 0;
-        } else {
-            bitset |= parse_bitset(&line)
-        }
+impl<T: BufRead> LineSepIterator<T> {
+    fn new(io: T) -> LineSepIterator<T> {
+        LineSepIterator{io: io, linebuf: String::new()}
     }
-    sum += bitset.count_ones();
-    return sum
 }
 
-fn part2(path: &str) -> u32 {
-    let mut sum: u32 = 0;
-    let mut bitset: u32 = u32::MAX;
-    for line in read_lines(path) {
-        if line.is_empty() && bitset != u32::MAX {
-            sum += bitset.count_ones();
-            bitset = u32::MAX;
-        } else {
-            bitset &= parse_bitset(&line)
-        }
+impl LineSepIterator<BufReader<File>> {
+    fn from_path(path: &str) -> Result<LineSepIterator<BufReader<File>>, std::io::Error> {
+        let file = File::open(path)?;   
+        Ok(LineSepIterator::new(BufReader::new(file)))
     }
-    sum += bitset.count_ones();
-    return sum
+}
+
+fn partx<F: std::ops::Fn(u32, u32) -> u32>(path: &str, init: u32, op: &F) -> () {
+    let reader = LineSepIterator::from_path(path)
+    .unwrap_or_else(|_| {println!("Could not open file"); exit(1)});
+    let n: u32 = reader.map(|chunks| {
+        chunks.unwrap_or_else(|_| {println!("Could not read line"); exit(1)})
+        .iter().map(|line| {
+            parse_bitset(line)
+        }).fold(init, op).count_ones()
+    }).sum();
+    println!("{}", n);
 }
 
 fn parse_bitset(string: &str) -> u32 {
@@ -72,9 +74,4 @@ fn parse_bitset(string: &str) -> u32 {
         result |= 1u32 << shift;
     }
     return result
-}
-
-fn read_lines(path: &str) -> impl Iterator<Item=String> {
-    BufReader::new(File::open(path).expect("Failed to open path")).lines()
-                    .map(|x| x.expect("Failed to read line".trim()).to_string())
 }
