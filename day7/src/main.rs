@@ -61,6 +61,9 @@ fn parse_rule_file<T: BufRead>(reader: T) -> Result<Vec<Bag>, ParserError> {
             Ok(line) => line,
             Err(_) => return Err(ParserError(lineno))
         };
+        if line.trim().is_empty() {
+            continue;
+        }
         let elem = match parse_rule(line.trim()) {
             Some(e) => e,
             None => return Err(ParserError(lineno))
