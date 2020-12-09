@@ -16,12 +16,16 @@ fn main() {
 lazy_static! {
     static ref HEAD_RE: Regex = Regex::new(r"^(\w+ \w+) bags $").unwrap();
     static ref TAIL_RE: Regex =
-        { Regex::new(r"^(?P<num>\d+) (?P<kind>\w+ \w+) bags?\.?$").unwrap() };
+        Regex::new(r"^(?P<num>\d+) (?P<kind>\w+ \w+) bags?\.?$").unwrap();
 }
+
+#[derive(Debug)]
+struct ParserError(usize);
+type Bag = (String, Vec<(usize, String)>);
 
 // Input is of kind:
 // big red bags contain 1 dotted pink bag, 3 metallic orange bags.
-fn parse_rule(string: &str) -> Option<(String, Vec<(usize, String)>)> {
+fn parse_rule(string: &str) -> Option<Bag> {
     let mut headtail = string.split("contain ");
 
     // Verify head (the thing before "contain ")
@@ -51,10 +55,6 @@ fn parse_rule(string: &str) -> Option<(String, Vec<(usize, String)>)> {
     Some((match1, vec))
 }
 
-#[derive(Debug)]
-struct ParserError(usize);
-type Bag = (String, Vec<(usize, String)>);
-
 // Load in the file to a vector of (o, [(n, i) ... ]) where o is the outer bag
 // which must contain n of i inner bags etc.
 fn parse_rule_file<T: BufRead>(reader: T) -> Result<Vec<Bag>, ParserError> {
@@ -77,15 +77,15 @@ fn parse_rule_file<T: BufRead>(reader: T) -> Result<Vec<Bag>, ParserError> {
 }
 
 // Map from e.g. "dotted blue" => [(3, "wavy gold"), (1, "dark maroon")]
-fn inner_outer_hashmap(v: &[Bag]) -> HashMap<String, Vec<String>> {
-    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+fn inner_outer_hashmap(v: &[Bag]) -> HashMap<&str, Vec<&str>> {
+    let mut map: HashMap<&str, Vec<&str>> = HashMap::new();
     for (outer, inners) in v {
         for (_n, inner) in inners {
-            match map.get_mut(inner) {
+            match map.get_mut::<str>(&inner) {
                 None => {
-                    map.insert(inner.clone(), vec![outer.clone()]);
+                    map.insert(inner, vec![outer]);
                 }
-                Some(v) => v.push(outer.clone()),
+                Some(v) => v.push(outer),
             }
         }
     }
@@ -96,25 +96,25 @@ fn inner_outer_hashmap(v: &[Bag]) -> HashMap<String, Vec<String>> {
 // seen, by keeping a set of processed types of bags
 fn part_1(inner: &str, bags: &[Bag]) -> usize {
     let map = inner_outer_hashmap(bags);
-    let mut unprocessed: Vec<String> = map
-        .get(inner)
+    let mut unprocessed: Vec<&str> = map
+        .get::<str>(inner)
         .expect("Input string not in map")
         .iter()
-        .map(|s| s.to_owned())
+        .copied()
         .collect();
-    let mut processed: HashSet<String> = HashSet::new();
+    let mut processed: HashSet<&str> = HashSet::new();
     loop {
         let bag = match unprocessed.pop() {
             None => return processed.len(),
             Some(b) => b,
         };
-        processed.insert(bag.to_string());
-        if let Some(outers) = map.get(&bag) {
+        processed.insert(bag);
+        if let Some(outers) = map.get(bag) {
             for outer in outers {
                 if processed.contains(outer) {
                     continue;
                 };
-                unprocessed.push(outer.to_string());
+                unprocessed.push(outer);
             }
         }
     }
@@ -127,16 +127,16 @@ fn part_1(inner: &str, bags: &[Bag]) -> usize {
 // If we do one round without inferring at least one new bag, and without having already
 // inferred our target bag, the problem is unsolvable and we panic.
 fn part_2(outer: &str, bags: &[Bag]) -> usize {
-    let mut containing_bags: HashMap<String, usize> = bags
+    let mut containing_bags: HashMap<&str, usize> = bags
         .iter()
         .filter(|(_h, v)| v.is_empty())
-        .map(|(h, _v)| (h.clone(), 0))
+        .map(|(h, _v)| (h.as_str(), 0))
         .collect();
 
     let mut remaining = bags
         .iter()
-        .filter(|(h, _v)| !containing_bags.contains_key(h))
-        .map(|(s, v)| (s, v))
+        .filter(|(h, _v)| !containing_bags.contains_key::<str>(h))
+        .map(|(h, v)| (h, v))
         .collect::<Vec<_>>();
     let mut skipped = Vec::new();
 
@@ -144,12 +144,12 @@ fn part_2(outer: &str, bags: &[Bag]) -> usize {
         let n_elem = remaining.len();
 
         for (outer, v) in remaining.drain(..) {
-            if v.iter().all(|(_n, h)| containing_bags.contains_key(h)) {
+            if v.iter().all(|(_n, h)| containing_bags.contains_key::<str>(h)) {
                 let n = v
                     .iter()
-                    .map(|(n, h)| n * containing_bags.get(h).unwrap() + n)
+                    .map(|(n, h)| n * containing_bags.get::<str>(h).unwrap() + n)
                     .sum();
-                containing_bags.insert(outer.to_string(), n);
+                containing_bags.insert(outer, n);
             } else {
                 skipped.push((outer, v));
             }
