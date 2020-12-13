@@ -1,4 +1,5 @@
 use CardinalDirection::*;
+use Instruction::*;
 
 fn main() {
     let instructions = parse_input("input.txt");
@@ -31,9 +32,9 @@ impl Rotation {
 
 #[derive(Debug, Clone, Copy)]
 enum Instruction {
-    Rot(Rotation),
+    Rotate(Rotation),
     Forward(u32),
-    Cardinal((CardinalDirection, u32)),
+    Translate((CardinalDirection, u32)),
 }
 
 fn parse_input(path: &str) -> Vec<Instruction> {
@@ -45,13 +46,13 @@ fn parse_line(line: &str) -> Option<Instruction> {
     let firstchar = line.chars().next()?;
     let magnitude = line[1..].parse::<u32>().ok()?;
     let instruction = match firstchar {
-        'N' => Instruction::Cardinal((North, magnitude)),
-        'E' => Instruction::Cardinal((East, magnitude)),
-        'W' => Instruction::Cardinal((West, magnitude)),
-        'S' => Instruction::Cardinal((South, magnitude)),
-        'L' => Instruction::Rot(Rotation::new(magnitude, true)?),
-        'R' => Instruction::Rot(Rotation::new(magnitude, false)?),
-        'F' => Instruction::Forward(magnitude),
+        'N' => Translate((North, magnitude)),
+        'E' => Translate((East, magnitude)),
+        'W' => Translate((West, magnitude)),
+        'S' => Translate((South, magnitude)),
+        'L' => Rotate(Rotation::new(magnitude, true)?),
+        'R' => Rotate(Rotation::new(magnitude, false)?),
+        'F' => Forward(magnitude),
         _ => { return None },
     };
     return Some(instruction)
@@ -96,15 +97,15 @@ fn part1(instructions: &[Instruction]) -> i32 {
     let mut direction = East;
     for instruction in instructions {
         match instruction {
-            Instruction::Forward(z) => {
+            Forward(z) => {
                 let pair = translate(x, y, direction, *z);
                 x = pair.0;
                 y = pair.1;
             },
-            Instruction::Rot(rotation) => {
+            Rotate(rotation) => {
                 direction = rotate_ship(direction, *rotation)
             },
-            Instruction::Cardinal((d, z)) => {
+            Translate((d, z)) => {
                 let pair = translate(x, y, *d, *z);
                 x = pair.0;
                 y = pair.1;
@@ -119,17 +120,17 @@ fn part2(instructions: &[Instruction]) -> i32 {
     let (mut dx, mut dy): (i32, i32) = (10, 1);
     for instruction in instructions {
         match instruction {
-            Instruction::Forward(z) => {
+            Forward(z) => {
                 let mg = *z as i32;
                 x += mg * dx;
                 y += mg * dy;
             },
-            Instruction::Rot(rotation) => {
+            Rotate(rotation) => {
                 let pair = rotate_waypoint(dx, dy, *rotation);
                 dx = pair.0;
                 dy = pair.1;
             },
-            Instruction::Cardinal((d, z)) => {
+            Translate((d, z)) => {
                 let pair = translate(dx, dy, *d, *z);
                 dx = pair.0;
                 dy = pair.1;
