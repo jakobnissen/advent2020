@@ -1,14 +1,13 @@
 use std::collections::HashMap;
-use std::fmt;
-use anyhow;
 use peg;
+use peg::{error::ParseError, str::LineCol};
 use LineInstruction::*;
 
 fn main() {
     let input = include_str!("input.txt");
     let mut mask = BitSetter::new();
-    let mut map_part1: HashMap<usize, u64> = HashMap::new();
-    let mut map_part2: HashMap<u64, u64> = HashMap::new();
+    let mut map_part1: HashMap<usize, u64> = HashMap::with_capacity(500);
+    let mut map_part2: HashMap<u64, u64> = HashMap::with_capacity(100_000);
     input.trim().lines().for_each(|s| {
         let instruction = parse_line(s).expect("Invalid line");
         match instruction {
@@ -35,13 +34,13 @@ enum LineInstruction {
     SetBit(usize, u64),
 }
 
-fn parse_line(s: &str) -> anyhow::Result<LineInstruction> {
+fn parse_line(s: &str) -> Result<LineInstruction, ParseError<LineCol>> {
     peg::parser! {
         grammar parser() for str {
             rule mask() -> BitSetter
              = msk:$(['0' | '1' | 'X']+) {? match BitSetter::from_str(msk) {
-                Ok(n) => Ok(n),
-                Err(e) => Err("Failed to parse bitsetter")
+                Some(n) => Ok(n),
+                None => Err("Failed to parse bitsetter")
              } }
 
             rule maskline() -> BitSetter
@@ -72,15 +71,6 @@ struct BitSetter {
     float_mask: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ParseBitSetterError;
-
-impl fmt::Display for ParseBitSetterError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "invalid string")
-    }
-}
-
 impl BitSetter {
     fn new() -> BitSetter {
         BitSetter{or_mask: 0, and_mask: u64::MAX, float_mask: 0}    
@@ -94,24 +84,24 @@ impl BitSetter {
         n | self.or_mask
     }
 
-    fn from_str(string: &str) -> Result<BitSetter, ParseBitSetterError> {
+    fn from_str(string: &str) -> Option<BitSetter> {
         let (mut or_mask, mut and_mask, mut float_mask):
         (u64, u64, u64) = (0, 0, 0);
         if string.len() > 64 {
-            return Err(ParseBitSetterError)
+            return None
         }
         for chr in string.chars() {
             let (or_or, and_or, float_or) = match chr {
                 '0' => (0, 0, 0),
                 '1' => (1, 1, 0),
                 'X' => (0, 1, 1),
-                _ => return Err(ParseBitSetterError),
+                _ => return None,
             };
             or_mask = (or_mask << 1) | or_or;
             and_mask = (and_mask << 1) | and_or;
             float_mask = (float_mask << 1) | float_or;
         }
-        Ok(BitSetter{or_mask, and_mask, float_mask})
+        Some(BitSetter{or_mask, and_mask, float_mask})
     }
 }
 
