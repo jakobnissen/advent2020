@@ -5,7 +5,7 @@ use peg;
 use LineInstruction::*;
 
 fn main() {
-    let input = include_str!("test.txt");
+    let input = include_str!("input.txt");
     let mut mask = BitSetter::new();
     let mut map_part1: HashMap<usize, u64> = HashMap::new();
     let mut map_part2: HashMap<u64, u64> = HashMap::new();
@@ -14,23 +14,20 @@ fn main() {
         match instruction {
             SetMask(m) => { mask = m },
             SetBit(i, b) => {
+            
                 // For part one, merely set bits
                 map_part1.insert(i, mask.set_bits(b));
 
-                // For part two,
-                println!("Adress: {}", i);
+                // For part two, iterate over all submasks and set
+                // the yielded addresses
                 for mem in FloatBitIterator::new(&mask, i as u64) {
-                    println!("{}", mem);
                     map_part2.insert(mem, b);
                 }
             }
         }
     });
-    println!("{:#?}", map_part2);
     println!("{}", map_part1.values().sum::<u64>());
     println!("{}", map_part2.values().sum::<u64>());
-
-    /* Test FloatBitIterator */
 }
 
 enum LineInstruction {
@@ -118,27 +115,21 @@ impl BitSetter {
     }
 }
 
+// This iterates all submasks from zero to self.mask. State is the
+// inverse of the submask (because the internal algorithm iterates state
+// from self.mask to zero)
 struct FloatBitIterator {
     n: u64,
     mask: u64,
     state: u64,
-
-    // n:     101010100110
-    // mask:  000010001000
-    // state: 111111110111 <- initial: zero at least sig bit of mask
-    // state: 000000001000 <- after one iteration
-    // state: 111101111111 <- then advance to next in mask, etc
-    // [ ... ]
-    // state: 000000000000 <- end of iterator.
+    done: bool
 }
 
 impl FloatBitIterator {
     fn new(bitmask: &BitSetter, n: u64) -> FloatBitIterator {
         let masked = bitmask.set_ones(n);
-        let state: u64 = if bitmask.float_mask == 0 { 0 } else {
-            !(1 << bitmask.float_mask.trailing_zeros())
-        };
-        FloatBitIterator{n: masked, mask: bitmask.float_mask, state}
+        let fm = bitmask.float_mask;
+        FloatBitIterator{n: masked, mask: fm, state: fm, done: false }
     }
 }
 
@@ -148,33 +139,24 @@ impl Iterator for FloatBitIterator {
     fn next(&mut self) -> Option<u64> {
         let state = self.state;
         // State == 0 signifies end of iterator.
-        if state == 0 {
+        if self.done {
             return None
         }
 
-        let result = Some(
-            if state.count_ones() == 1 {
-                self.n | state
-            } else {
-                self.n & state
-            });
+        // Iterator counts down, we invert in order for it to count from 0
+        // and up to mask
+        let inverted_state = self.mask & !state;
+        
+        // Zero out bits in self.mask, then add in the state
+        let result = Some((self.n & !(self.mask)) | inverted_state);
 
-        self.state = {
-            let oneone = state.count_ones() == 1;
-            if oneone {
-                // Final leftward position of state, and one one is the last
-                // state. So we set it to zero ( = finished )
-                if state.leading_zeros() == self.mask.leading_zeros() {
-                    0
-                // Else we advance the state one tick leftwards and invert it
-                } else {
-                    let tz = (self.mask & !((state << 1) - 1)).trailing_zeros();
-                    !(1 << tz)
-                }
-            } else {
-                !state
-            }
-        };
+        // Update state
+        if state == 0 {
+            self.done = true;
+        } else {
+            self.state = (state - 1) & self.mask;
+        }
+
         return result
     }
 }
@@ -186,11 +168,12 @@ mod tests {
     #[test]
     fn test_init_bitsetter() {
         let bitsetter = BitSetter::from_str(&"10X011XXX101X1").unwrap();
-        assert_eq!(bitsetter.or_mask,    0b10001100010101);
-        assert_eq!(bitsetter.and_mask,   0b10101111110111);
-        assert_eq!(bitsetter.float_mask, 0b00100011100010);
+        assert_eq!(bitsetter.or_mask,       0b10001100010101);
+        assert_eq!(bitsetter.and_mask,      0b10101111110111);
+        assert_eq!(bitsetter.float_mask,    0b00100011100010);
     }
 
+    #[test]
     fn test_set_bitsetter() {
         let n: u64 =                0b10100111010100;
         let bs = BitSetter::from_str("10X001X10XX101").unwrap();
@@ -198,14 +181,15 @@ mod tests {
         assert_eq!(bs.set_ones(n),  0b10100111010101);
     }
 
+    #[test]
     fn test_float_iter() {
         let n: u64 =                0b10100011;
         let bs = BitSetter::from_str("10X001X1").unwrap();
         let mut fi = FloatBitIterator::new(&bs, n);
-        assert_eq!(fi.next(),  Some(0b10100001)); 
-        assert_eq!(fi.next(),  Some(0b10100011)); 
-        assert_eq!(fi.next(),  Some(0b10000001)); 
-        assert_eq!(fi.next(),  Some(0b10100001)); 
+        assert_eq!(fi.next(),  Some(0b10000101)); 
+        assert_eq!(fi.next(),  Some(0b10000111)); 
+        assert_eq!(fi.next(),  Some(0b10100101)); 
+        assert_eq!(fi.next(),  Some(0b10100111)); 
         assert_eq!(fi.next(),  None);    
     }
 }
